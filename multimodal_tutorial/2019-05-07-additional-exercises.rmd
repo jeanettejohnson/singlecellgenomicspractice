@@ -1,0 +1,145 @@
+---
+title: "additional exercises for working with RNA and ADT data"
+output: 
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r reconstruct raw to scaled data, echo=TRUE}
+library(Seurat)
+library(ggplot2)
+
+# print the first 5 rows/columns of raw RNA data
+cbmc@assays$RNA@counts[1:5,1:5]
+
+# print the first 5 rows/columns of raw ADT data
+cbmc@assays$ADT@counts[1:5,1:5]
+
+# log normalize RNA data and print the same subset
+cbmc <- NormalizeData(cbmc)
+cbmc@assays$RNA@data[1:5,1:5]
+
+# CLR normalize ADT data and print the same subset
+cbmc <- NormalizeData(cbmc, assay = "ADT", normalization.method = "CLR")
+cbmc@assays$ADT@data[1:5,1:5]
+
+# scale RNA data and print the same subset
+cbmc <- ScaleData(cbmc)
+cbmc@assays$RNA@scale.data[1:5,1:5]
+
+# scale ADT data and print the same subset
+cbmc <- ScaleData(cbmc, assay = "ADT")
+cbmc@assays$ADT@scale.data[1:5,1:5]
+```
+
+```{r find number of cells single- or double- positive for some markers, echo=TRUE}
+# for this example I will use CD4 and CD8, as I already know there's a good amount
+# of single positive cells for each as well as a few double positive cells.
+
+# count number of cells positive for CD4
+cd4plus <- WhichCells(cbmc, expression= CD4 > 0)
+length(cd4plus)
+
+# count number of cells positive for CD8
+cd8plus <- WhichCells(cbmc, expression= CD8A > 0)
+length(cd8plus)
+
+# count number of double positive cells
+length(WhichCells(object = cbmc, cells = cd8plus, expression= CD4 > 0))
+
+# count the number of double negative cells
+cd4minus <- WhichCells(cbmc, expression= CD4 == 0)
+cd4minuscd8minus <- WhichCells(cbmc, cd4minus, expression = CD8A == 0)
+length(cd4minuscd8minus)
+
+# let's do a scatter plot of CD4 vs CD8A RNA expression. These values seem to match up pretty well with the observed expression data.
+plot(FeatureScatter(cbmc, feature1 = "CD4", feature2 = "CD8A", slot = "counts", identity= "Raw CD4 vs CD8 RNA data"))
+
+```
+```{r look at ADT data}
+
+# Without subsetting the data, let's do a scatter plot of adt_CD4 vs adt_CD8.
+plot(FeatureScatter(cbmc, feature1 = "adt_CD4", feature2 = "adt_CD8", slot = "counts", identity= "Raw CD4 vs CD8 ADT data"))
+
+# this seems pretty different from the RNA scatter plot, and there are definitely a lot more
+# than 12 double positive cells. Let's try subsetting the data to only look at "T cells"
+```
+
+```{r clustering and subsetting}
+# first need to cluster based on RNA data
+cbmc <- RunPCA(cbmc, verbose = FALSE)
+cbmc <- FindNeighbors(cbmc, dims = 1:25)
+cbmc <- FindClusters(cbmc, resolution = 0.8)
+cbmc <- RunTSNE(cbmc, dims = 1:25, method = "FIt-SNE")
+new.cluster.ids <- c("Memory CD4 T", "CD14+ Mono A", "Naive CD4 T", "NK", "CD14+ Mono B", "Mouse", "B", 
+    "CD8 T", "CD16+ Mono", "T/Mono doublets", "NK", "CD34+", "Multiplets", "Mouse", "Eryth", "Mk", 
+    "Mouse", "DC", "pDCs")
+names(new.cluster.ids) <- levels(cbmc)
+cbmc <- RenameIdents(cbmc, new.cluster.ids)
+
+# Let's look at the number of CD4+ T cells (T helper cells):
+length(WhichCells(cbmc, idents = "Naive CD4 T")) + length(WhichCells(cbmc, idents = "Memory CD4 T"))
+
+# Now let's see the number of CD8+ cells:
+length(WhichCells(cbmc, idents = "CD8 T"))
+
+# RNA clustering identified about the same number of CD8+ cells, but
+# around 3x the number of CD4+ cells. This could be due to high dropout of CD4 mRNAs.
+
+# Now we'll do another ADT feature scatter based on only the CD4+, CD8+, and memory T cell data.
+# This should look a lot more like the RNA plot, because it will be adjusted to account for
+# the higher protein copy number (compared to mRNA count).
+tcells <- subset(cbmc, idents = c("Naive CD4 T", "Memory CD4 T", "CD8 T"))
+FeatureScatter(tcells, feature1 = "adt_CD4", feature2 = "adt_CD8")
+```
+```{r table of top 5 genes for some clusters}
+
+# Now let's have a look at the top 5 gene markers for three phagocyte subsets.
+# We'll examine CD16+ Monocytes and two groups of CD14+ Monocytes.
+phagocytes <- subset(cbmc, idents = c("CD14+ Mono A", "CD14+ Mono B", "CD16+ Mono"))
+phagocytes <- FindVariableFeatures(phagocytes, selection.method = "vst", nfeatures = 2000)
+# find all markers of CD14 + Monocytes Group A
+cd14a.markers <- FindMarkers(phagocytes, ident.1 = "CD14+ Mono A", min.pct = 0.25)
+cd14b.markers <- FindMarkers(phagocytes, ident.1 = "CD14+ Mono B", min.pct = 0.25)
+cd16.markers <- FindMarkers(phagocytes, ident.1 = "CD16+ Mono", min.pct = 0.25)
+head(cd14a.markers, n = 5)
+head(cd14b.markers, n = 5)
+head(cd16.markers, n = 5)
+```
+```{r 10x Genomics Data}
+# load 10x data that I downloaded from their website
+pbmc10k.data <- Read10X(data.dir = "~/HarderLab/singlecellgenomicspractice/multimodal_tutorial/filtered_feature_bc_matrix/")
+rownames(x = pbmc10k.data[["Antibody Capture"]]) <- gsub(pattern = "_[control_]*TotalSeqB", replacement = "", 
+    x = rownames(x = pbmc10k.data[["Antibody Capture"]]))
+
+# load a seurat object with chosen cutoff values
+pbmc10k <- CreateSeuratObject(counts = pbmc10k.data[["Gene Expression"]], min.cells = 3, min.features = 200)
+
+# log normalize RNA data
+pbmc10k <- NormalizeData(pbmc10k)
+
+# create ADT assay object
+pbmc10k[["ADT"]] <- CreateAssayObject(pbmc10k.data[["Antibody Capture"]][, colnames(x = pbmc10k)])
+
+# CLR normalize ADT data
+pbmc10k <- NormalizeData(pbmc10k, assay = "ADT", normalization.method = "CLR")
+
+# plot CD19 ADT vs CD3 ADT
+# should show strong separation because CD3 is expressed on T cells, CD19 on B cells
+plot1 <- FeatureScatter(pbmc10k, feature1 = "adt_CD19", feature2 = "adt_CD3", pt.size = 1)
+
+# plot CD4 ADT vs CD8A ADT
+# Should be about the same as we saw before, a lot of double negative/single positive
+plot2 <- FeatureScatter(pbmc10k, feature1 = "adt_CD4", feature2 = "adt_CD8a", pt.size = 1)
+
+# plot CD3 ADT against CD3E mRNA reads
+# these can be plotted together because they've both been normalized
+plot3 <- FeatureScatter(pbmc10k, feature1 = "adt_CD3", feature2 = "CD3E", pt.size = 1)
+
+# display plots side by side
+plot(CombinePlots(plots = list(plot1, plot2, plot3), ncol = 3, legend = "none"))
+
+```
