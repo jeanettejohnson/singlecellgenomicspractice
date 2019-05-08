@@ -1,0 +1,55 @@
+---
+title: "Manual vs Seurat CLR Normalization"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load dataset, warning=FALSE}
+# load lab ADT dataset
+# Load in the ADT UMI matrix
+adt.data <- as.sparse(read.csv(file = "~/HarderLab/singlecellgenomicspractice/multimodal_tutorial/ADT_raw_data.csv", sep = ",", 
+    header = TRUE, row.names = 1))
+```
+
+```{r manual clr, echo=FALSE}
+adt.data <- as.matrix(adt.data)
+adt.data[1:5, 1:5]
+
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+
+clrmanual <- function(data) {
+  manualclrdata = matrix(0L, nrow = nrow(data), ncol = ncol(data))
+  for (i in 1:nrow(data)) {
+    rowmean <- gm_mean(data[i,])
+    adjusted <- data[i,]/rowmean
+    for (j in 1:ncol(data))
+    {
+      if (data[i,j]< 10) {
+        manualclrdata[i,j]=0
+      }
+      else {
+        manualclrdata[i,j] <- log(adjusted[j]) 
+      }
+    }
+  }
+  return (manualclrdata)
+}
+
+manualnorm <- clrmanual(adt.data)
+
+library(Seurat)
+
+seuratnorm <- NormalizeData(adt.data, assay = "ADT", normalization.method = "CLR")
+
+seuratnorm[1:5, 1:5]
+
+hist(adt.data[1,], plot = TRUE)
+hist(manualnorm[1,], plot=TRUE)
+hist(seuratnorm[1,], plot= TRUE)
+
+```
